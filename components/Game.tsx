@@ -1,682 +1,506 @@
 "use client";
 
-import { useReducer, useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// ─── WORM DATA ─────────────────────────────────────────────────────────────
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
 
-const WORMS = [
-  {
-    id: "hank",
-    name: "Hank",
-    emoji: "🪱",
-    flavor: "The smallest worm. Doesn't know it yet. Very confident.",
-    baseCost: 10,
-    baseDPS: 0.1,
-  },
-  {
-    id: "larry",
-    name: "Larry",
-    emoji: "🪱",
-    flavor: "Slightly larger than Hank. Reminds everyone of this constantly.",
-    baseCost: 100,
-    baseDPS: 0.8,
-  },
-  {
-    id: "jerry",
-    name: "Jerry",
-    emoji: "🪱",
-    flavor: "Getting up there in size. Has a newsletter about soil.",
-    baseCost: 1_100,
-    baseDPS: 5,
-  },
-  {
-    id: "gary",
-    name: "Gary",
-    emoji: "🪱",
-    flavor: "The biggest of the small worms. Gary takes this very seriously.",
-    baseCost: 12_000,
-    baseDPS: 25,
-  },
-  {
-    id: "darilyn",
-    name: "Darilyn",
-    emoji: "🐍",
-    flavor: "A big worm. Elegant. Powerful. Answers to no one.",
-    baseCost: 130_000,
-    baseDPS: 120,
-  },
-  {
-    id: "matzobrei",
-    name: "MatzoBrei",
-    emoji: "🌍",
-    flavor: "The biggest worm. Ancient. Unknowable. Possibly the earth itself.",
-    baseCost: 1_400_000,
-    baseDPS: 600,
-  },
-] as const;
+const WORLD      = 2500;
+const SEG_DIST   = 8;       // pixels between body segment centers
+const FOOD_TOTAL = 800;
+const BOT_TOTAL  = 8;
+const TURN_RATE  = 0.08;    // radians per frame max turn
+const EAT_BONUS  = 14;      // extra pickup radius beyond worm radius
 
-type WormId = (typeof WORMS)[number]["id"];
+// ─── LEVEL DATA ───────────────────────────────────────────────────────────────
 
-// ─── UPGRADE DATA ──────────────────────────────────────────────────────────
-
-type ClickUpgrade = {
-  id: string;
-  name: string;
-  description: string;
-  cost: number;
-  type: "click";
-  multiplier: number;
-  unlockTotalDirt: number;
-};
-
-type WormUpgrade = {
-  id: string;
-  name: string;
-  description: string;
-  cost: number;
-  type: "worm";
-  worm: WormId;
-  multiplier: number;
-  unlockCount: number;
-};
-
-type Upgrade = ClickUpgrade | WormUpgrade;
-
-const UPGRADES: Upgrade[] = [
-  // Click upgrades
-  { id: "sharp_teeth",    name: "Sharper Teeth",           description: "2× click power.",             cost: 100,         type: "click", multiplier: 2, unlockTotalDirt: 0 },
-  { id: "mega_bite",      name: "Mega Bite",               description: "2× click power.",             cost: 5_000,       type: "click", multiplier: 2, unlockTotalDirt: 500 },
-  { id: "vacuum_mouth",   name: "Vacuum Mouth",            description: "2× click power.",             cost: 500_000,     type: "click", multiplier: 2, unlockTotalDirt: 50_000 },
-
-  // Hank upgrades
-  { id: "hank_pep_talk",  name: "Pep Talk for Hank",       description: "Hanks produce 2×.",           cost: 500,         type: "worm", worm: "hank",      multiplier: 2, unlockCount: 1 },
-  { id: "hank_hat",       name: "Hank's Little Hard Hat",  description: "Hanks produce 2×.",           cost: 5_000,       type: "worm", worm: "hank",      multiplier: 2, unlockCount: 10 },
-  { id: "hank_union",     name: "Hank Unionizes",          description: "Hanks produce 2×.",           cost: 50_000,      type: "worm", worm: "hank",      multiplier: 2, unlockCount: 25 },
-
-  // Larry upgrades
-  { id: "larry_brag",     name: "Larry Brags About Size",  description: "Larrys produce 2×.",          cost: 5_000,       type: "worm", worm: "larry",     multiplier: 2, unlockCount: 1 },
-  { id: "larry_shirt",    name: "Larry's Custom Shirt",    description: "Larrys produce 2×.",          cost: 50_000,      type: "worm", worm: "larry",     multiplier: 2, unlockCount: 10 },
-
-  // Jerry upgrades
-  { id: "jerry_sub",      name: "Jerry's Newsletter",      description: "Jerrys produce 2×.",          cost: 55_000,      type: "worm", worm: "jerry",     multiplier: 2, unlockCount: 1 },
-  { id: "jerry_premium",  name: "Jerry Goes Premium",      description: "Jerrys produce 2×.",          cost: 550_000,     type: "worm", worm: "jerry",     multiplier: 2, unlockCount: 10 },
-
-  // Gary upgrades
-  { id: "gary_serious",   name: "Gary Is Very Serious",    description: "Garys produce 2×.",           cost: 600_000,     type: "worm", worm: "gary",      multiplier: 2, unlockCount: 1 },
-  { id: "gary_meeting",   name: "Gary Calls a Meeting",    description: "Garys produce 2×.",           cost: 6_000_000,   type: "worm", worm: "gary",      multiplier: 2, unlockCount: 10 },
-
-  // Darilyn upgrades
-  { id: "darilyn_cape",   name: "Darilyn's Cape",          description: "Darilyns produce 2×.",        cost: 6_500_000,   type: "worm", worm: "darilyn",   multiplier: 2, unlockCount: 1 },
-  { id: "darilyn_decree", name: "Darilyn Issues a Decree", description: "Darilyns produce 2×.",        cost: 65_000_000,  type: "worm", worm: "darilyn",   multiplier: 2, unlockCount: 10 },
-
-  // MatzoBrei upgrades
-  { id: "matzo_stirs",    name: "MatzoBrei Stirs",         description: "MatzoBrei produces 2×.",      cost: 70_000_000,  type: "worm", worm: "matzobrei", multiplier: 2, unlockCount: 1 },
-  { id: "matzo_wakes",    name: "MatzoBrei Fully Wakes",   description: "MatzoBrei produces 2×.",      cost: 700_000_000, type: "worm", worm: "matzobrei", multiplier: 2, unlockCount: 10 },
+const LEVELS = [
+  { name: "Hank",      color: "#ff7777", shadow: "#881111", radius: 8,  speed: 3.0, xpToNext: 25  },
+  { name: "Larry",     color: "#ffbb55", shadow: "#885500", radius: 12, speed: 3.4, xpToNext: 65  },
+  { name: "Jerry",     color: "#66ee66", shadow: "#226622", radius: 16, speed: 3.8, xpToNext: 140 },
+  { name: "Gary",      color: "#8899ff", shadow: "#223399", radius: 21, speed: 4.2, xpToNext: 270 },
+  { name: "Darilyn",   color: "#ee77ee", shadow: "#882288", radius: 28, speed: 4.6, xpToNext: 480 },
+  { name: "MatzoBrei", color: "#ffd700", shadow: "#886600", radius: 38, speed: 5.0, xpToNext: Infinity },
 ];
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────
+// ─── TYPES ────────────────────────────────────────────────────────────────────
 
-function fmt(n: number): string {
-  if (n < 1_000) return Math.floor(n).toString();
-  const tiers = [
-    [1e24, "Sp"],
-    [1e21, "Sx"],
-    [1e18, "Qi"],
-    [1e15, "Qa"],
-    [1e12, "T"],
-    [1e9,  "B"],
-    [1e6,  "M"],
-    [1e3,  "K"],
-  ] as [number, string][];
-  for (const [threshold, suffix] of tiers) {
-    if (n >= threshold) {
-      return (n / threshold).toFixed(1) + suffix;
-    }
-  }
-  return Math.floor(n).toString();
-}
+type Pt     = { x: number; y: number };
+type Phase  = "start" | "playing" | "dead" | "won";
 
-function wormCost(baseCost: number, count: number): number {
-  return Math.floor(baseCost * Math.pow(1.15, count));
-}
+type Player = { segs: Pt[]; angle: number; xp: number; level: number };
+type Bot    = { id: number; segs: Pt[]; angle: number; turnTimer: number; levelIdx: number; color: string; shadow: string };
+type Food   = { id: number; x: number; y: number; color: string };
 
-// ─── STATE ────────────────────────────────────────────────────────────────
-
-type GameState = {
-  dirt: number;
-  totalDirt: number;
-  wormCounts: Partial<Record<WormId, number>>;
-  purchasedUpgrades: string[];
-  lastTick: number;
+type GS = {
+  player:       Player;
+  bots:         Bot[];
+  foods:        Food[];
+  mouse:        Pt;
+  phase:        Phase;
+  lvlMsgText:   string | null;
+  lvlMsgTimer:  number;
+  animId:       number;
 };
 
-type Action =
-  | { type: "CLICK" }
-  | { type: "BUY_WORM"; id: WormId }
-  | { type: "BUY_UPGRADE"; id: string }
-  | { type: "TICK"; now: number }
-  | { type: "LOAD"; state: GameState };
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
 
-function calcDPS(state: GameState): number {
-  let total = 0;
-  for (const worm of WORMS) {
-    const count = state.wormCounts[worm.id] ?? 0;
-    if (count === 0) continue;
-    let dps = worm.baseDPS * count;
-    for (const u of UPGRADES) {
-      if (u.type === "worm" && u.worm === worm.id && state.purchasedUpgrades.includes(u.id)) {
-        dps *= u.multiplier;
-      }
-    }
-    total += dps;
-  }
-  return total;
+let _fid = 0, _bid = 0;
+const FOOD_COLORS = ["#ff6b6b","#ffd93d","#6bcb77","#4d96ff","#ff6fc8","#c77dff","#ff9f43","#00e5ff"];
+const BOT_COLORS  = ["#ff9955","#55ddaa","#aa77ff","#ff7799","#77ccff","#ffdd55","#ff77aa","#aaffcc"];
+const BOT_SHADOWS = ["#995522","#228866","#553388","#993344","#336688","#886600","#994466","#557744"];
+
+function rnd(a: number, b: number) { return a + Math.random() * (b - a); }
+
+function makeFood(): Food {
+  return {
+    id: _fid++,
+    x: rnd(60, WORLD - 60),
+    y: rnd(60, WORLD - 60),
+    color: FOOD_COLORS[Math.floor(Math.random() * FOOD_COLORS.length)],
+  };
 }
 
-function calcClickValue(state: GameState): number {
-  let val = 1;
-  for (const u of UPGRADES) {
-    if (u.type === "click" && state.purchasedUpgrades.includes(u.id)) {
-      val *= u.multiplier;
-    }
-  }
-  // Bonus: 1% of DPS per click
-  val += calcDPS(state) * 0.01;
-  return val;
+function makeSegs(x: number, y: number, n: number): Pt[] {
+  return Array.from({ length: n }, (_, i) => ({ x, y: y + i * SEG_DIST }));
 }
 
-function reducer(state: GameState, action: Action): GameState {
-  switch (action.type) {
-    case "CLICK": {
-      const gained = calcClickValue(state);
-      return { ...state, dirt: state.dirt + gained, totalDirt: state.totalDirt + gained };
+function makeBot(): Bot {
+  const li = Math.floor(Math.random() * 4); // bots max at Gary
+  const ci = Math.floor(Math.random() * BOT_COLORS.length);
+  return {
+    id: _bid++,
+    segs: makeSegs(rnd(150, WORLD - 150), rnd(150, WORLD - 150), 20 + li * 8),
+    angle: Math.random() * Math.PI * 2,
+    turnTimer: Math.floor(rnd(80, 200)),
+    levelIdx: li,
+    color: BOT_COLORS[ci],
+    shadow: BOT_SHADOWS[ci],
+  };
+}
+
+function followSegs(segs: Pt[]) {
+  for (let i = 1; i < segs.length; i++) {
+    const p = segs[i - 1], c = segs[i];
+    const dx = p.x - c.x, dy = p.y - c.y;
+    const d = Math.hypot(dx, dy);
+    if (d > SEG_DIST) {
+      c.x += (dx / d) * (d - SEG_DIST);
+      c.y += (dy / d) * (d - SEG_DIST);
     }
-    case "BUY_WORM": {
-      const def = WORMS.find((w) => w.id === action.id);
-      if (!def) return state;
-      const count = state.wormCounts[action.id] ?? 0;
-      const cost = wormCost(def.baseCost, count);
-      if (state.dirt < cost) return state;
-      return {
-        ...state,
-        dirt: state.dirt - cost,
-        wormCounts: { ...state.wormCounts, [action.id]: count + 1 },
-      };
-    }
-    case "BUY_UPGRADE": {
-      const def = UPGRADES.find((u) => u.id === action.id);
-      if (!def || state.purchasedUpgrades.includes(action.id)) return state;
-      if (state.dirt < def.cost) return state;
-      return {
-        ...state,
-        dirt: state.dirt - def.cost,
-        purchasedUpgrades: [...state.purchasedUpgrades, action.id],
-      };
-    }
-    case "TICK": {
-      const elapsed = Math.min((action.now - state.lastTick) / 1000, 60);
-      const earned = calcDPS(state) * elapsed;
-      return {
-        ...state,
-        dirt: state.dirt + earned,
-        totalDirt: state.totalDirt + earned,
-        lastTick: action.now,
-      };
-    }
-    case "LOAD":
-      return action.state;
-    default:
-      return state;
   }
 }
 
-const INIT: GameState = {
-  dirt: 0,
-  totalDirt: 0,
-  wormCounts: {},
-  purchasedUpgrades: [],
-  lastTick: Date.now(),
-};
-
-// ─── SAVE / LOAD ──────────────────────────────────────────────────────────
-
-const SAVE_KEY = "losworm_v1";
-
-function save(state: GameState) {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch {}
+function clampWorld(p: Pt, m = 40) {
+  p.x = Math.max(m, Math.min(WORLD - m, p.x));
+  p.y = Math.max(m, Math.min(WORLD - m, p.y));
 }
 
-function load(): GameState | null {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as GameState;
-  } catch { return null; }
+function shortAngle(a: number, b: number) {
+  let d = b - a;
+  while (d >  Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
 }
 
-// ─── FLAVOR TEXT ──────────────────────────────────────────────────────────
-
-function flavorText(totalDirt: number): string {
-  if (totalDirt < 10)        return "The empire begins with a single worm...";
-  if (totalDirt < 100)       return "The dirt trembles with possibility.";
-  if (totalDirt < 1_000)     return "Your worms have found purpose.";
-  if (totalDirt < 10_000)    return "Los Worm rises from the earth.";
-  if (totalDirt < 100_000)   return "The tunnels stretch for miles.";
-  if (totalDirt < 1_000_000) return "An empire beneath your feet.";
-  if (totalDirt < 1e9)       return "The surface world knows not what stirs below.";
-  if (totalDirt < 1e12)      return "Geologists are baffled.";
-  return "The Great Worm stirs. All dirt is yours.";
-}
-
-// ─── COMPONENT ────────────────────────────────────────────────────────────
-
-type Floatie = { id: number; x: number; y: number; value: string };
+// ─── COMPONENT ────────────────────────────────────────────────────────────────
 
 export default function Game() {
-  const [state, dispatch] = useReducer(reducer, INIT);
-  const [clicking, setClicking] = useState(false);
-  const [floaties, setFloaties] = useState<Floatie[]>([]);
-  const floatId = useRef(0);
-  const initialized = useRef(false);
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const gsRef      = useRef<GS | null>(null);
+  const [phase,      setPhase]      = useState<Phase>("start");
+  const [deathLevel, setDeathLevel] = useState(0);
 
-  // Load save + apply offline progress
-  useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-    const saved = load();
-    if (!saved) return;
-    const now = Date.now();
-    const elapsed = (now - saved.lastTick) / 1000;
-    if (elapsed > 0) {
-      const dps = calcDPS(saved);
-      const offline = dps * Math.min(elapsed, 8 * 3600);
-      saved.dirt += offline;
-      saved.totalDirt += offline;
-      saved.lastTick = now;
-    }
-    dispatch({ type: "LOAD", state: saved });
-  }, []);
-
-  // Auto-save every 10s
-  useEffect(() => {
-    const id = setInterval(() => save(state), 10_000);
-    return () => clearInterval(id);
-  }, [state]);
-
-  // Game tick
-  useEffect(() => {
-    const id = setInterval(() => dispatch({ type: "TICK", now: Date.now() }), 100);
-    return () => clearInterval(id);
-  }, []);
-
-  const dps = calcDPS(state);
-  const clickValue = calcClickValue(state);
-
-  const handleClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    dispatch({ type: "CLICK" });
-    setClicking(true);
-    setTimeout(() => setClicking(false), 80);
-    const rect = e.currentTarget.getBoundingClientRect();
-    const id = floatId.current++;
-    const floatie: Floatie = {
-      id,
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
-      value: `+${fmt(clickValue)}`,
+  function initGame() {
+    const cx = WORLD / 2, cy = WORLD / 2;
+    const iw = typeof window !== "undefined" ? window.innerWidth  : 800;
+    const ih = typeof window !== "undefined" ? window.innerHeight : 600;
+    gsRef.current = {
+      player:      { segs: makeSegs(cx, cy, 20), angle: -Math.PI / 2, xp: 0, level: 0 },
+      bots:        Array.from({ length: BOT_TOTAL  }, makeBot),
+      foods:       Array.from({ length: FOOD_TOTAL }, makeFood),
+      mouse:       { x: iw / 2, y: ih / 2 },
+      phase:       "playing",
+      lvlMsgText:  null,
+      lvlMsgTimer: 0,
+      animId:      0,
     };
-    setFloaties((f) => [...f, floatie]);
-    setTimeout(() => setFloaties((f) => f.filter((x) => x.id !== id)), 850);
-  }, [clickValue]);
+  }
 
-  const availableUpgrades = UPGRADES.filter((u) => {
-    if (state.purchasedUpgrades.includes(u.id)) return false;
-    if (u.type === "click") return state.totalDirt >= u.unlockTotalDirt;
-    if (u.type === "worm")  return (state.wormCounts[u.worm] ?? 0) >= u.unlockCount;
-    return false;
-  });
+  function startGame() {
+    initGame();
+    setDeathLevel(0);
+    setPhase("playing");
+  }
 
-  const handleReset = () => {
-    if (window.confirm("Wipe your entire worm empire? This is permanent.")) {
-      localStorage.removeItem(SAVE_KEY);
-      window.location.reload();
+  useEffect(() => {
+    if (phase !== "playing") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    function resize() {
+      if (!canvas) return;
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
     }
+    resize();
+    window.addEventListener("resize", resize);
+
+    function onMouseMove(e: MouseEvent) {
+      if (gsRef.current) gsRef.current.mouse = { x: e.clientX, y: e.clientY };
+    }
+    function onTouchMove(e: TouchEvent) {
+      e.preventDefault();
+      if (gsRef.current && e.touches[0])
+        gsRef.current.mouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+
+    const ctx = canvas.getContext("2d")!;
+    const gs  = gsRef.current!;
+
+    // ── DRAW WORM ──────────────────────────────────────────────────────────────
+    function drawWorm(segs: Pt[], lvlIdx: number, color: string, shadow: string, camX: number, camY: number) {
+      if (!segs.length) return;
+      const W = canvas!.width, H = canvas!.height;
+      const radius = LEVELS[Math.min(lvlIdx, LEVELS.length - 1)].radius;
+
+      // Body (tail → head so head is drawn on top)
+      for (let i = segs.length - 1; i >= 0; i--) {
+        const sx = segs[i].x - camX;
+        const sy = segs[i].y - camY;
+        if (sx < -radius * 3 || sx > W + radius * 3 || sy < -radius * 3 || sy > H + radius * 3) continue;
+
+        const taper = 0.65 + 0.35 * (1 - (i / segs.length) * 0.55);
+        const r = radius * taper;
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, r + 3, 0, Math.PI * 2);
+        ctx.fillStyle = shadow;
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(sx, sy, r, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+
+      // Eyes
+      const head = segs[0];
+      const hx = head.x - camX;
+      const hy = head.y - camY;
+      const hAngle = segs.length > 1
+        ? Math.atan2(head.y - segs[1].y, head.x - segs[1].x)
+        : 0;
+      const eyeOff = radius * 0.45;
+      const eyeR   = Math.max(2.5, radius * 0.28);
+
+      for (const side of [-0.55, 0.55]) {
+        const ex = hx + Math.cos(hAngle + side) * eyeOff;
+        const ey = hy + Math.sin(hAngle + side) * eyeOff;
+        ctx.beginPath(); ctx.arc(ex, ey, eyeR, 0, Math.PI * 2);
+        ctx.fillStyle = "white"; ctx.fill();
+        ctx.beginPath();
+        ctx.arc(ex + Math.cos(hAngle) * eyeR * 0.35, ey + Math.sin(hAngle) * eyeR * 0.35, eyeR * 0.55, 0, Math.PI * 2);
+        ctx.fillStyle = "#111"; ctx.fill();
+      }
+    }
+
+    // ── GAME LOOP ──────────────────────────────────────────────────────────────
+    function loop() {
+      const g = gsRef.current;
+      if (!g || g.phase !== "playing") return;
+
+      const W = canvas!.width, H = canvas!.height;
+      const { player, bots, foods } = g;
+      const lvl  = LEVELS[player.level];
+      const head = player.segs[0];
+
+      // Move player toward mouse
+      const tAngle = Math.atan2(g.mouse.y - H / 2, g.mouse.x - W / 2);
+      const diff   = shortAngle(player.angle, tAngle);
+      player.angle += Math.sign(diff) * Math.min(Math.abs(diff), TURN_RATE);
+      head.x += Math.cos(player.angle) * lvl.speed;
+      head.y += Math.sin(player.angle) * lvl.speed;
+      clampWorld(head);
+      followSegs(player.segs);
+
+      // Move bots
+      for (const bot of bots) {
+        const bh = bot.segs[0];
+        // Bounce off walls
+        if      (bh.x < 120)          bot.angle = rnd(-0.3, 0.3);
+        else if (bh.x > WORLD - 120)  bot.angle = Math.PI + rnd(-0.3, 0.3);
+        else if (bh.y < 120)          bot.angle = Math.PI / 2 + rnd(-0.3, 0.3);
+        else if (bh.y > WORLD - 120)  bot.angle = -Math.PI / 2 + rnd(-0.3, 0.3);
+        else {
+          bot.turnTimer--;
+          if (bot.turnTimer <= 0) {
+            bot.angle    += rnd(-1.2, 1.2);
+            bot.turnTimer = Math.floor(rnd(60, 180));
+          }
+        }
+        const bs = LEVELS[bot.levelIdx].speed * 0.8;
+        bh.x += Math.cos(bot.angle) * bs;
+        bh.y += Math.sin(bot.angle) * bs;
+        clampWorld(bh);
+        followSegs(bot.segs);
+      }
+
+      // Eat food
+      const eatR = lvl.radius + EAT_BONUS;
+      for (let i = 0; i < foods.length; i++) {
+        const f = foods[i];
+        if (Math.hypot(head.x - f.x, head.y - f.y) < eatR) {
+          foods[i] = makeFood(); // respawn in place
+
+          // Grow tail
+          const tail = player.segs[player.segs.length - 1];
+          player.segs.push({ x: tail.x, y: tail.y });
+          player.xp++;
+
+          // Check level up
+          const xpNeeded = LEVELS[player.level].xpToNext;
+          if (xpNeeded !== Infinity && player.xp >= xpNeeded && player.level < LEVELS.length - 1) {
+            player.level++;
+            player.xp = 0;
+            // Bonus length on evolve
+            for (let j = 0; j < 20; j++) {
+              const t2 = player.segs[player.segs.length - 1];
+              player.segs.push({ x: t2.x, y: t2.y });
+            }
+            const newName = LEVELS[player.level].name;
+            g.lvlMsgText  = player.level === LEVELS.length - 1
+              ? `YOU ARE ${newName.toUpperCase()}!`
+              : `You are now ${newName}!`;
+            g.lvlMsgTimer = 180;
+            if (player.level === LEVELS.length - 1) {
+              g.phase = "won";
+              setPhase("won");
+              return;
+            }
+          }
+        }
+      }
+
+      // Collision: player head hits bot body → die
+      outer:
+      for (const bot of bots) {
+        const br      = LEVELS[bot.levelIdx].radius;
+        const killDist = lvl.radius + br - 6;
+        for (let i = 3; i < bot.segs.length; i++) {
+          if (Math.hypot(head.x - bot.segs[i].x, head.y - bot.segs[i].y) < killDist) {
+            g.phase = "dead";
+            setDeathLevel(player.level);
+            setPhase("dead");
+            break outer;
+          }
+        }
+      }
+      if (g.phase !== "playing") return;
+
+      // Level-up message countdown
+      if (g.lvlMsgTimer > 0) {
+        g.lvlMsgTimer--;
+      } else {
+        g.lvlMsgText = null;
+      }
+
+      // ── RENDER ──────────────────────────────────────────────────────────────
+
+      const camX = head.x - W / 2;
+      const camY = head.y - H / 2;
+
+      // Background
+      ctx.fillStyle = "#0c1a08";
+      ctx.fillRect(0, 0, W, H);
+
+      // Grid
+      ctx.strokeStyle = "#162610";
+      ctx.lineWidth   = 1;
+      const G   = 80;
+      const ox  = ((G - camX % G) % G);
+      const oy  = ((G - camY % G) % G);
+      for (let gx = ox; gx < W; gx += G) { ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke(); }
+      for (let gy = oy; gy < H; gy += G) { ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke(); }
+
+      // World border
+      ctx.strokeStyle = "#3a7a22";
+      ctx.lineWidth   = 5;
+      ctx.strokeRect(-camX, -camY, WORLD, WORLD);
+
+      // Food
+      for (const f of foods) {
+        const fx = f.x - camX, fy = f.y - camY;
+        if (fx < -20 || fx > W + 20 || fy < -20 || fy > H + 20) continue;
+        ctx.beginPath(); ctx.arc(fx, fy, 7, 0, Math.PI * 2);
+        ctx.fillStyle = f.color + "44"; ctx.fill();
+        ctx.beginPath(); ctx.arc(fx, fy, 4, 0, Math.PI * 2);
+        ctx.fillStyle = f.color; ctx.fill();
+      }
+
+      // Bots
+      for (const bot of bots) drawWorm(bot.segs, bot.levelIdx, bot.color, bot.shadow, camX, camY);
+
+      // Player
+      drawWorm(player.segs, player.level, lvl.color, lvl.shadow, camX, camY);
+
+      // ── HUD ─────────────────────────────────────────────────────────────────
+
+      const bx = 20, by = 26;
+      const barW = 200, barH = 16;
+      const xpNeeded = LEVELS[player.level].xpToNext;
+      const xpPct    = xpNeeded === Infinity ? 1 : Math.min(player.xp / xpNeeded, 1);
+
+      // Background panel
+      ctx.fillStyle = "#00000099";
+      ctx.fillRect(bx - 10, by - 28, barW + 20, 78);
+
+      // Worm name
+      ctx.font      = "bold 17px 'Courier New', monospace";
+      ctx.fillStyle = lvl.color;
+      ctx.textAlign = "left";
+      ctx.fillText(lvl.name, bx, by);
+
+      // XP bar track
+      ctx.fillStyle = "#2a2a2a";
+      ctx.fillRect(bx, by + 6, barW, barH);
+      // XP bar fill
+      ctx.fillStyle = lvl.color;
+      ctx.fillRect(bx, by + 6, barW * xpPct, barH);
+      // XP bar border
+      ctx.strokeStyle = "#555";
+      ctx.lineWidth   = 1;
+      ctx.strokeRect(bx, by + 6, barW, barH);
+      // XP text
+      ctx.font      = "10px 'Courier New', monospace";
+      ctx.fillStyle = "#ffffffbb";
+      ctx.fillText(xpNeeded === Infinity ? "MAX" : `${player.xp} / ${xpNeeded}`, bx + 5, by + 18);
+
+      // Level progression dots
+      const dotY    = by + 38;
+      const dotGap  = barW / (LEVELS.length - 1);
+      for (let i = 0; i < LEVELS.length; i++) {
+        const dx = bx + i * dotGap;
+        const isActive  = i === player.level;
+        const isPast    = i < player.level;
+        ctx.beginPath();
+        ctx.arc(dx, dotY, isActive ? 8 : 5, 0, Math.PI * 2);
+        ctx.fillStyle = (isActive || isPast) ? LEVELS[i].color : "#2a2a2a";
+        ctx.fill();
+        if (isActive) {
+          ctx.strokeStyle = LEVELS[i].color;
+          ctx.lineWidth   = 2;
+          ctx.stroke();
+        }
+      }
+
+      // Length counter (top right)
+      ctx.font      = "12px 'Courier New', monospace";
+      ctx.fillStyle = "#ffffff44";
+      ctx.textAlign = "right";
+      ctx.fillText(`length ${player.segs.length}`, W - 16, 28);
+      ctx.textAlign = "left";
+
+      // Level-up message
+      if (g.lvlMsgText && g.lvlMsgTimer > 0) {
+        const t     = g.lvlMsgTimer / 180;
+        const alpha = t < 0.15 ? t / 0.15 : t > 0.85 ? (1 - t) / 0.15 : 1;
+        ctx.globalAlpha = alpha;
+        ctx.font        = "bold 44px 'Courier New', monospace";
+        ctx.textAlign   = "center";
+        ctx.fillStyle   = LEVELS[player.level].color;
+        ctx.fillText(g.lvlMsgText, W / 2, H / 2 - 10);
+        ctx.font      = "20px 'Courier New', monospace";
+        ctx.fillStyle = "#ffffffcc";
+        ctx.fillText("you evolved!", W / 2, H / 2 + 28);
+        ctx.globalAlpha = 1;
+        ctx.textAlign   = "left";
+      }
+
+      g.animId = requestAnimationFrame(loop);
+    }
+
+    gs.animId = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(gs.animId);
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("mousemove", onMouseMove);
+      canvas.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [phase]);
+
+  // ─── STYLES ─────────────────────────────────────────────────────────────────
+
+  const overlay: React.CSSProperties = {
+    position: "fixed", inset: 0,
+    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+    background: "#0c1a08ee", gap: 18, textAlign: "center", padding: 24,
+    fontFamily: "'Courier New', monospace",
   };
 
-  const ownedWorms = WORMS.filter((w) => (state.wormCounts[w.id] ?? 0) > 0);
+  function btn(bg: string, fg: string): React.CSSProperties {
+    return { padding: "12px 40px", fontSize: 18, fontWeight: 700, background: bg, color: fg, border: "none", borderRadius: 30, cursor: "pointer", fontFamily: "inherit", letterSpacing: 2, marginTop: 8 };
+  }
+
+  // ─── RENDER ─────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        height: "100vh",
-        background: "#1a0f00",
-        color: "#d4a96a",
-        fontFamily: "'Courier New', monospace",
-        overflow: "hidden",
-      }}
-    >
-      {/* ── HEADER ── */}
-      <div
-        style={{
-          background: "#0d0700",
-          borderBottom: "1px solid #3d2400",
-          padding: "10px 20px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexShrink: 0,
-        }}
-      >
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 900, color: "#f0d060", letterSpacing: 4 }}>
+    <div style={{ width: "100vw", height: "100vh", background: "#0c1a08", overflow: "hidden" }}>
+      <canvas ref={canvasRef} style={{ display: phase === "playing" ? "block" : "none" }} />
+
+      {/* START */}
+      {phase === "start" && (
+        <div style={overlay}>
+          <h1 style={{ fontSize: 64, fontWeight: 900, color: "#ffd700", margin: 0, letterSpacing: 6, textShadow: "0 0 30px #ffaa00" }}>
             LOS WORM
-          </div>
-          <div style={{ fontSize: 10, color: "#5a3c10", letterSpacing: 2 }}>
-            WORM EMPIRE BUILDER
-          </div>
-        </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: "#f0d060" }}>
-            {fmt(state.dirt)}{" "}
-            <span style={{ fontSize: 14, color: "#a07040" }}>dirt</span>
-          </div>
-          <div style={{ fontSize: 12, color: "#7a5c30" }}>
-            {fmt(dps)}/sec &nbsp;·&nbsp; {fmt(clickValue)}/click
-          </div>
-        </div>
-      </div>
-
-      {/* ── MAIN ── */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-
-        {/* ── LEFT: CLICKER ── */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 24,
-            background: "#120a00",
-            padding: 24,
-            overflow: "hidden",
-          }}
-        >
-          {/* Clickable worm */}
-          <div style={{ position: "relative" }}>
-            <button
-              onClick={handleClick}
-              style={{
-                fontSize: 100,
-                lineHeight: 1,
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                userSelect: "none",
-                transform: clicking ? "scale(0.9)" : "scale(1)",
-                transition: "transform 0.08s ease",
-              }}
-              className={clicking ? "" : "worm-idle"}
-            >
-              🪱
-            </button>
-            {floaties.map((f) => (
-              <div
-                key={f.id}
-                className="float-up"
-                style={{
-                  position: "absolute",
-                  left: f.x,
-                  top: f.y,
-                  pointerEvents: "none",
-                  color: "#f0d060",
-                  fontWeight: 700,
-                  fontSize: 14,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {f.value}
+          </h1>
+          <p style={{ color: "#88ee88", fontSize: 16, margin: 0 }}>Eat. Grow. Evolve.</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5, margin: "6px 0" }}>
+            {LEVELS.map((l, i) => (
+              <div key={l.name} style={{ color: l.color, fontSize: 15 }}>
+                {i === LEVELS.length - 1 ? "★" : "›"} {l.name}
+                {i === LEVELS.length - 1 ? " — final form" : ""}
               </div>
             ))}
           </div>
-
-          {/* Flavor text */}
-          <div
-            style={{
-              color: "#5a3c10",
-              fontSize: 13,
-              fontStyle: "italic",
-              textAlign: "center",
-              maxWidth: 300,
-            }}
-          >
-            {flavorText(state.totalDirt)}
-          </div>
-
-          {/* Worm summary grid */}
-          {ownedWorms.length > 0 && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))",
-                gap: 8,
-                width: "100%",
-                maxWidth: 380,
-              }}
-            >
-              {ownedWorms.map((w) => (
-                <div
-                  key={w.id}
-                  style={{
-                    background: "#1a0f00",
-                    border: "1px solid #3d2400",
-                    borderRadius: 8,
-                    padding: "8px 4px",
-                    textAlign: "center",
-                  }}
-                >
-                  <div style={{ fontSize: 22 }}>{w.emoji}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: "#f0d060" }}>
-                    {state.wormCounts[w.id]}
-                  </div>
-                  <div style={{ fontSize: 9, color: "#5a3c10", wordBreak: "break-word" }}>
-                    {w.name}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Total dirt ever */}
-          <div style={{ fontSize: 11, color: "#3d2000" }}>
-            total dirt excavated: {fmt(state.totalDirt)}
-          </div>
+          <p style={{ color: "#555", fontSize: 13, maxWidth: 360 }}>
+            Move your mouse to steer. Eat the glowing pellets to grow and evolve.
+            Avoid hitting other worms.
+          </p>
+          <button onClick={startGame} style={btn("#ffd700", "#000")}>PLAY</button>
         </div>
+      )}
 
-        {/* ── RIGHT: SHOP ── */}
-        <div
-          style={{
-            width: 300,
-            background: "#0d0700",
-            borderLeft: "1px solid #3d2400",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-          }}
-        >
-          {/* Upgrades section */}
-          {availableUpgrades.length > 0 && (
-            <div
-              style={{
-                borderBottom: "1px solid #3d2400",
-                padding: 12,
-                flexShrink: 0,
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 10,
-                  color: "#5a3c10",
-                  letterSpacing: 2,
-                  textTransform: "uppercase",
-                  marginBottom: 8,
-                }}
-              >
-                Upgrades
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {availableUpgrades.map((u) => {
-                  const canAfford = state.dirt >= u.cost;
-                  return (
-                    <button
-                      key={u.id}
-                      onClick={() => dispatch({ type: "BUY_UPGRADE", id: u.id })}
-                      disabled={!canAfford}
-                      style={{
-                        textAlign: "left",
-                        padding: "8px 10px",
-                        borderRadius: 6,
-                        border: canAfford ? "1px solid #8b6a30" : "1px solid #2a1a00",
-                        background: canAfford ? "#1a0f00" : "#0d0700",
-                        cursor: canAfford ? "pointer" : "not-allowed",
-                        opacity: canAfford ? 1 : 0.5,
-                        color: "#d4a96a",
-                        fontFamily: "inherit",
-                        transition: "background 0.1s",
-                      }}
-                    >
-                      <div style={{ fontWeight: 700, fontSize: 12, color: "#d4a96a" }}>
-                        {u.name}
-                      </div>
-                      <div style={{ fontSize: 10, color: "#7a5c30" }}>{u.description}</div>
-                      <div style={{ fontSize: 11, color: "#f0d060", marginTop: 2 }}>
-                        🪙 {fmt(u.cost)}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Worm shop */}
-          <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
-            <div
-              style={{
-                fontSize: 10,
-                color: "#5a3c10",
-                letterSpacing: 2,
-                textTransform: "uppercase",
-                marginBottom: 8,
-              }}
-            >
-              Recruit Worms
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {WORMS.map((worm) => {
-                const count = state.wormCounts[worm.id] ?? 0;
-                const cost = wormCost(worm.baseCost, count);
-                const canAfford = state.dirt >= cost;
-                // Hide until player has earned at least half the base cost
-                if (count === 0 && state.totalDirt < worm.baseCost * 0.5) return null;
-
-                return (
-                  <button
-                    key={worm.id}
-                    onClick={() => dispatch({ type: "BUY_WORM", id: worm.id })}
-                    disabled={!canAfford}
-                    style={{
-                      textAlign: "left",
-                      padding: "10px 12px",
-                      borderRadius: 8,
-                      border: canAfford ? "1px solid #8b6a30" : "1px solid #2a1a00",
-                      background: canAfford ? "#1a0f00" : "#0d0700",
-                      cursor: canAfford ? "pointer" : "not-allowed",
-                      opacity: canAfford ? 1 : 0.6,
-                      color: "#d4a96a",
-                      fontFamily: "inherit",
-                      transition: "background 0.1s",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        gap: 8,
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 24 }}>{worm.emoji}</span>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: "#d4a96a" }}>
-                            {worm.name}
-                          </div>
-                          <div style={{ fontSize: 10, color: "#5a3c10" }}>
-                            {worm.baseDPS}/s each
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ textAlign: "right", flexShrink: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: "#f0d060" }}>
-                          {fmt(cost)}
-                        </div>
-                        {count > 0 && (
-                          <div style={{ fontSize: 11, color: "#a07040" }}>×{count}</div>
-                        )}
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "#5a3c10",
-                        fontStyle: "italic",
-                        marginTop: 4,
-                      }}
-                    >
-                      {worm.flavor}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+      {/* DEAD */}
+      {phase === "dead" && (
+        <div style={overlay}>
+          <h1 style={{ fontSize: 56, fontWeight: 900, color: "#ff4444", margin: 0, textShadow: "0 0 20px #ff0000" }}>
+            YOU DIED
+          </h1>
+          <p style={{ color: "#aaa", fontSize: 17 }}>
+            You were{" "}
+            <span style={{ color: LEVELS[deathLevel].color, fontWeight: 700 }}>
+              {LEVELS[deathLevel].name}
+            </span>.
+          </p>
+          <p style={{ color: "#555", fontSize: 13 }}>You collided with another worm.</p>
+          <button onClick={startGame} style={btn("#ff4444", "#fff")}>TRY AGAIN</button>
         </div>
-      </div>
+      )}
 
-      {/* ── FOOTER ── */}
-      <div
-        style={{
-          background: "#0d0700",
-          borderTop: "1px solid #3d2400",
-          padding: "6px 20px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          fontSize: 11,
-          color: "#3d2000",
-          flexShrink: 0,
-        }}
-      >
-        <span>worms are eternal</span>
-        <button
-          onClick={handleReset}
-          style={{
-            background: "none",
-            border: "none",
-            color: "#3d2000",
-            cursor: "pointer",
-            fontFamily: "inherit",
-            fontSize: 11,
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.color = "#7a3030")}
-          onMouseLeave={(e) => (e.currentTarget.style.color = "#3d2000")}
-        >
-          reset empire
-        </button>
-      </div>
+      {/* WON */}
+      {phase === "won" && (
+        <div style={overlay}>
+          <h1 style={{ fontSize: 52, fontWeight: 900, color: "#ffd700", margin: 0, textShadow: "0 0 40px #ffaa00", lineHeight: 1.1 }}>
+            YOU ARE<br />MATZOBREI
+          </h1>
+          <p style={{ color: "#ffd700", fontSize: 18 }}>The earth itself trembles.</p>
+          <p style={{ color: "#666", fontSize: 13 }}>The worm empire is complete.</p>
+          <button onClick={startGame} style={btn("#ffd700", "#000")}>PLAY AGAIN</button>
+        </div>
+      )}
     </div>
   );
 }
