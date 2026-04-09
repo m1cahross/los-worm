@@ -28,7 +28,7 @@ type Pt     = { x: number; y: number };
 type Phase  = "start" | "playing" | "dead" | "won";
 
 type Player = { segs: Pt[]; angle: number; xp: number; level: number };
-type Bot    = { id: number; segs: Pt[]; angle: number; turnTimer: number; levelIdx: number; color: string; shadow: string };
+type Bot    = { id: number; name: string; segs: Pt[]; angle: number; turnTimer: number; levelIdx: number; color: string; shadow: string };
 type Food   = { id: number; x: number; y: number; color: string };
 
 type GS = {
@@ -48,6 +48,17 @@ let _fid = 0, _bid = 0;
 const FOOD_COLORS = ["#ff6b6b","#ffd93d","#6bcb77","#4d96ff","#ff6fc8","#c77dff","#ff9f43","#00e5ff"];
 const BOT_COLORS  = ["#ff9955","#55ddaa","#aa77ff","#ff7799","#77ccff","#ffdd55","#ff77aa","#aaffcc"];
 const BOT_SHADOWS = ["#995522","#228866","#553388","#993344","#336688","#886600","#994466","#557744"];
+const BOT_NAMES   = [
+  "Mordechai","Mordy","Chaya","Charilyn","FoBrøyna","Avshalom",
+  "Fitzwilliam","Larilyn","Spank","Heinrich","Harilyn","Bubbie",
+  "DarryQueen","HennyBalooga","Linny",
+];
+let _nameIdx = 0;
+function nextBotName() {
+  const name = BOT_NAMES[_nameIdx % BOT_NAMES.length];
+  _nameIdx++;
+  return name;
+}
 
 function rnd(a: number, b: number) { return a + Math.random() * (b - a); }
 
@@ -69,6 +80,7 @@ function makeBot(): Bot {
   const ci = Math.floor(Math.random() * BOT_COLORS.length);
   return {
     id: _bid++,
+    name: nextBotName(),
     segs: makeSegs(rnd(150, WORLD - 150), rnd(150, WORLD - 150), 20 + li * 8),
     angle: Math.random() * Math.PI * 2,
     turnTimer: Math.floor(rnd(80, 200)),
@@ -160,7 +172,7 @@ export default function Game() {
     const gs  = gsRef.current!;
 
     // ── DRAW WORM ──────────────────────────────────────────────────────────────
-    function drawWorm(segs: Pt[], lvlIdx: number, color: string, shadow: string, camX: number, camY: number) {
+    function drawWorm(segs: Pt[], lvlIdx: number, color: string, shadow: string, camX: number, camY: number, name?: string) {
       if (!segs.length) return;
       const W = canvas!.width, H = canvas!.height;
       const radius = LEVELS[Math.min(lvlIdx, LEVELS.length - 1)].radius;
@@ -203,6 +215,20 @@ export default function Game() {
         ctx.beginPath();
         ctx.arc(ex + Math.cos(hAngle) * eyeR * 0.35, ey + Math.sin(hAngle) * eyeR * 0.35, eyeR * 0.55, 0, Math.PI * 2);
         ctx.fillStyle = "#111"; ctx.fill();
+      }
+
+      // Nametag
+      if (name) {
+        const tagY    = hy - radius - 8;
+        const fontSize = Math.max(10, Math.min(13, radius * 0.65));
+        ctx.font      = `bold ${fontSize}px 'Courier New', monospace`;
+        ctx.textAlign = "center";
+        const tw = ctx.measureText(name).width;
+        ctx.fillStyle = "#000000cc";
+        ctx.fillRect(hx - tw / 2 - 4, tagY - fontSize, tw + 8, fontSize + 4);
+        ctx.fillStyle = color;
+        ctx.fillText(name, hx, tagY);
+        ctx.textAlign = "left";
       }
     }
 
@@ -283,7 +309,7 @@ export default function Game() {
         }
       }
 
-      // Collision: player head hits bot body → die
+      // Collision: player head hits bot body → player dies
       outer:
       for (const bot of bots) {
         const br      = LEVELS[bot.levelIdx].radius;
@@ -298,6 +324,38 @@ export default function Game() {
         }
       }
       if (g.phase !== "playing") return;
+
+      // Collision: bot head hits player body → bot dies, explodes into pellets
+      for (let bi = bots.length - 1; bi >= 0; bi--) {
+        const bot  = bots[bi];
+        const bh   = bot.segs[0];
+        const br   = LEVELS[bot.levelIdx].radius;
+        const killDist = br + lvl.radius - 6;
+        let killed = false;
+        for (let pi = 5; pi < player.segs.length; pi++) {
+          if (Math.hypot(bh.x - player.segs[pi].x, bh.y - player.segs[pi].y) < killDist) {
+            killed = true;
+            break;
+          }
+        }
+        if (killed) {
+          // Explode the bot into food pellets (every 3rd segment + a few extras)
+          for (let si = 0; si < bot.segs.length; si += 3) {
+            foods.push({
+              id: _fid++,
+              x: bot.segs[si].x + rnd(-6, 6),
+              y: bot.segs[si].y + rnd(-6, 6),
+              color: bot.color,
+            });
+          }
+          // Bonus dense cluster at head
+          for (let k = 0; k < 5; k++) {
+            foods.push({ id: _fid++, x: bh.x + rnd(-12, 12), y: bh.y + rnd(-12, 12), color: bot.color });
+          }
+          // Respawn bot at new location
+          bots[bi] = makeBot();
+        }
+      }
 
       // Level-up message countdown
       if (g.lvlMsgTimer > 0) {
@@ -340,7 +398,7 @@ export default function Game() {
       }
 
       // Bots
-      for (const bot of bots) drawWorm(bot.segs, bot.levelIdx, bot.color, bot.shadow, camX, camY);
+      for (const bot of bots) drawWorm(bot.segs, bot.levelIdx, bot.color, bot.shadow, camX, camY, bot.name);
 
       // Player
       drawWorm(player.segs, player.level, lvl.color, lvl.shadow, camX, camY);
